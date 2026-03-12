@@ -11,6 +11,7 @@ local DocumentRegistry = {
     providers = {},
     known_providers = {}, -- hash table of registered providers { provider_key = provider }
     filetype_provider = {},
+    aux_filetype_provider = {},
     mimetype_ext = {},
     image_ext = {
         gif  = true,
@@ -54,6 +55,14 @@ end
 -- plugin in FileManager:openFile().
 function DocumentRegistry:addAuxProvider(provider)
     self.known_providers[provider.provider] = provider
+
+    if provider.extensions then
+        for _, ext in ipairs(provider.extensions) do
+            ext = string.lower(ext)
+            self.filetype_provider[ext] = true
+            self.aux_filetype_provider[ext] = provider.provider
+        end
+    end
 end
 
 --- Returns true if file has provider.
@@ -96,6 +105,13 @@ function DocumentRegistry:getProvider(file, include_aux)
         local provider = provider_key and self.known_providers[provider_key]
         if provider and (not provider.order or include_aux) then -- excluding auxiliary by default
             return provider
+        end
+        if include_aux and file then
+            local aux_provider_key = self.aux_filetype_provider[getSuffix(file)]
+            provider = aux_provider_key and self.known_providers[aux_provider_key]
+            if provider then
+                return provider
+            end
         end
         -- highest weighted provider
         return providers and providers[1].provider
