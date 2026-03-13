@@ -24,15 +24,6 @@ local Lcpl = WidgetContainer:extend{
     is_doc_only = false,
 }
 
-local function read_file(path)
-    local fh = io.open(path, "rb")
-    if not fh then
-        return nil
-    end
-    local data = fh:read("*all")
-    fh:close()
-    return data
-end
 
 function Lcpl:init()
     if not Device:isKindle() then
@@ -74,7 +65,7 @@ function Lcpl:_deriveOutputFile(file, publication_link)
     end
     ext = ext and ext:lower() or "epub"
 
-    return (folder ~= "/" and folder or "") .. "/" .. filename .. ".lcp." .. ext
+    return folder .. filename .. ".lcp." .. ext
 end
 
 function Lcpl:_downloadFile(local_path, remote_url)
@@ -85,7 +76,7 @@ function Lcpl:_downloadFile(local_path, remote_url)
         headers = {
             ["Accept-Encoding"] = "identity",
         },
-        sink = ltn12.sink.file(io.open(local_path, "w")),
+        sink = ltn12.sink.file(io.open(local_path, "wb")),
     })
     socketutil:reset_timeout()
 
@@ -140,7 +131,7 @@ function Lcpl:openFile(file)
         return
     end
 
-    local content = read_file(file)
+    local content = util.readFromFile(file, "rb")
     if not content then
         UIManager:show(InfoMessage:new{ text = _("Unable to read LCPL file.") })
         return

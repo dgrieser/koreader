@@ -59,7 +59,6 @@ function DocumentRegistry:addAuxProvider(provider)
     if provider.extensions then
         for _, ext in ipairs(provider.extensions) do
             ext = string.lower(ext)
-            self.filetype_provider[ext] = true
             self.aux_filetype_provider[ext] = provider.provider
         end
     end
@@ -78,6 +77,10 @@ function DocumentRegistry:hasProvider(file, mimetype, include_aux)
     -- registered document provider
     local filename_suffix = getSuffix(file)
     if self.filetype_provider[filename_suffix] then
+        return true
+    end
+    -- registered auxiliary provider by file type
+    if include_aux and self.aux_filetype_provider[filename_suffix] then
         return true
     end
     -- associated document or auxiliary provider for file type
