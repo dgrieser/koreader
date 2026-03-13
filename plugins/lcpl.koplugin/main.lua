@@ -119,7 +119,6 @@ function Lcpl:_showPassphrasePrompt(license_doc, callback)
                     text = _("Cancel"),
                     id = "close",
                     callback = function()
-                        dialog:onClose()
                         UIManager:close(dialog)
                     end,
                 },
@@ -127,7 +126,6 @@ function Lcpl:_showPassphrasePrompt(license_doc, callback)
                     text = _("Continue"),
                     callback = function()
                         local passphrase = dialog:getInputText()
-                        dialog:onClose()
                         UIManager:close(dialog)
                         callback(passphrase)
                     end,
