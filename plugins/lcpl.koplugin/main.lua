@@ -69,16 +69,31 @@ function Lcpl:_deriveOutputFile(file, publication_link)
 end
 
 function Lcpl:_downloadFile(local_path, remote_url)
-    local code, headers, status
+    local file_handle, err = io.open(local_path, "wb")
+    if not file_handle then
+        logger.warn("LCPL: could not open file for writing", local_path, err)
+        return false, err or "cannot open file"
+    end
+
+    local sink = ltn12.sink.file(file_handle)
+    local ok, _, code, headers, status
+
     socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
-    code, headers, status = socket.skip(1, http.request {
+    ok, _, code, headers, status = pcall(http.request, {
         url = remote_url,
         headers = {
             ["Accept-Encoding"] = "identity",
         },
-        sink = ltn12.sink.file(io.open(local_path, "wb")),
+        sink = sink,
     })
     socketutil:reset_timeout()
+
+    if not ok then
+        sink(nil) -- make sure the file handle is closed on error
+        util.removeFile(local_path)
+        logger.warn("LCPL: publication download request failed", code)
+        return false, code
+    end
 
     if code == 200 then
         return true
