@@ -39,6 +39,10 @@ function Lcpl:init()
     })
 end
 
+function Lcpl:isFileTypeSupported(file)
+    return util.getFileNameSuffix(file):lower() == "lcpl"
+end
+
 function Lcpl:_findLink(license_doc, rel_name)
     local links = license_doc and license_doc.links
     if type(links) ~= "table" then
