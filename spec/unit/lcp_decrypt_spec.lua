@@ -148,6 +148,16 @@ describe("LCP decrypt module", function()
             for _ in pairs(result) do count = count + 1 end
             assert.are.equal(0, count)
         end)
+
+        it("does not match 'CipherReference' in attribute values or comments", function()
+            -- The tighter pattern anchors on the element name, not arbitrary text.
+            local xml = [[<!-- CipherReference should not be matched here -->
+<root attr='CipherReference URI="should-not-match"'></root>]]
+            local result = LcpDecrypt.parseEncryptionXml(xml)
+            local count = 0
+            for _ in pairs(result) do count = count + 1 end
+            assert.are.equal(0, count)
+        end)
     end)
 
     describe("verifyPassphrase", function()

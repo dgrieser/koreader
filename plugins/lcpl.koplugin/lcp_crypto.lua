@@ -5,21 +5,18 @@ require("ffi/loadlib")
 -- Try to load libcrypto (OpenSSL is bundled via LuaSec).
 local libcrypto
 do
-    local ok, err = pcall(ffi.load, "crypto")
-    if ok then
-        libcrypto = err
-    else
-        ok, err = pcall(ffi.load, "libcrypto.so.1.1")
+    local last_err
+    for _, name in ipairs({ "crypto", "libcrypto.so.1.1", "libcrypto.so.1.0.0" }) do
+        local ok, lib_or_err = pcall(ffi.load, name)
         if ok then
-            libcrypto = err
+            libcrypto = lib_or_err
+            break
         else
-            ok, err = pcall(ffi.load, "libcrypto.so.1.0.0")
-            if ok then
-                libcrypto = err
-            else
-                error("LCP: could not load libcrypto: " .. tostring(err))
-            end
+            last_err = lib_or_err
         end
+    end
+    if not libcrypto then
+        error("LCP: could not load libcrypto: " .. tostring(last_err))
     end
 end
 

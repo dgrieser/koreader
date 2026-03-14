@@ -87,8 +87,8 @@ end
 --- @return table
 function LcpDecrypt.parseEncryptionXml(xml_str)
     local encrypted = {}
-    -- Match every element that contains "CipherReference" and extract its URI attribute.
-    for tag in xml_str:gmatch("<[^>]*CipherReference[^>]*>") do
+    -- Match only opening CipherReference elements, optionally namespace-prefixed (e.g. enc:CipherReference).
+    for tag in xml_str:gmatch("<[%w:]*CipherReference[^>]*>") do
         local uri = tag:match('URI="([^"]*)"') or tag:match("URI='([^']*)'")
         if uri then
             -- ZIP entry paths are not percent-encoded; decode the URI for comparison.
@@ -116,13 +116,19 @@ function LcpDecrypt.decryptEpub(lcp_epub_path, content_key, output_path)
     end
     local encrypted_files = LcpDecrypt.parseEncryptionXml(enc_xml)
 
-    -- Collect all ZIP entries into memory so we can write mimetype first.
+    -- Collect all ZIP entries into memory.
+    -- Track the mimetype entry separately so it can be written first (EPUB spec requirement).
     local entries = {}
+    local mimetype_entry
     for entry in arc:iterate() do
         if entry.mode == "file" then
             local data = arc:extractToMemory(entry.path)
             if data then
-                entries[#entries + 1] = { path = entry.path, data = data }
+                if entry.path == "mimetype" then
+                    mimetype_entry = { path = entry.path, data = data }
+                else
+                    entries[#entries + 1] = { path = entry.path, data = data }
+                end
             end
         end
     end
@@ -137,21 +143,18 @@ function LcpDecrypt.decryptEpub(lcp_epub_path, content_key, output_path)
     local ok_all, fail_reason = true, nil
 
     -- EPUB spec: "mimetype" must be the first entry and stored uncompressed.
-    writer:setZipCompression("store")
-    for _, e in ipairs(entries) do
-        if e.path == "mimetype" then
-            writer:addFileFromMemory(e.path, e.data, mtime)
-            break
-        end
+    if mimetype_entry then
+        writer:setZipCompression("store")
+        writer:addFileFromMemory(mimetype_entry.path, mimetype_entry.data, mtime)
     end
 
     -- Write all remaining files with deflate compression.
     writer:setZipCompression("deflate")
     for _, e in ipairs(entries) do
         local path = e.path
-        -- Skip mimetype (already written) and encryption.xml (omitted from output).
-        if path == "mimetype" or path == "META-INF/encryption.xml" then
-            -- already handled or intentionally omitted
+        -- Skip encryption.xml (omitted from output so the reader doesn't treat content as encrypted).
+        if path == "META-INF/encryption.xml" then
+            -- intentionally omitted
         elseif encrypted_files[path] then
             -- LCP-encrypted resource: IV is the first 16 bytes.
             if #e.data < 17 then
