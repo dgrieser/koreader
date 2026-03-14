@@ -56,7 +56,8 @@ function Lcpl:_findLink(license_doc, rel_name)
     return nil
 end
 
-function Lcpl:_deriveOutputFile(file, publication_link)
+-- Returns the path for the encrypted intermediate file (e.g. book.lcp.epub).
+function Lcpl:_deriveEncryptedFile(file, publication_link)
     local folder, base_name = util.splitFilePathName(file)
     local filename = base_name:gsub("%.[^%.]+$", "")
     local ext
@@ -70,6 +71,12 @@ function Lcpl:_deriveOutputFile(file, publication_link)
     ext = ext and ext:lower() or "epub"
 
     return folder .. filename .. ".lcp." .. ext
+end
+
+-- Derives the final decrypted output path from the encrypted intermediate path.
+-- e.g. /path/book.lcp.epub → /path/book.epub
+function Lcpl:_deriveDecryptedFile(lcp_path)
+    return lcp_path:gsub("%.lcp%.", ".")
 end
 
 function Lcpl:_downloadFile(local_path, remote_url)
@@ -164,6 +171,7 @@ function Lcpl:openFile(file)
         return
     end
 
+    -- Prompt for passphrase first so we can fail fast before any download.
     self:_showPassphrasePrompt(license_doc, function(passphrase)
         if not passphrase or passphrase == "" then
             UIManager:show(InfoMessage:new{ text = _("A passphrase is required to open LCP content.") })
@@ -176,12 +184,29 @@ function Lcpl:openFile(file)
             return
         end
 
-        local local_path = self:_deriveOutputFile(file, publication_link)
+        -- Derive the user key and verify the passphrase before downloading.
+        local LcpDecrypt = require("lcp_decrypt")
+        local user_key, key_err = LcpDecrypt.deriveUserKey(passphrase)
+        if not user_key then
+            UIManager:show(InfoMessage:new{ text = T(_("Key derivation failed: %1"), key_err or "") })
+            return
+        end
+
+        local pass_ok, pass_err = LcpDecrypt.verifyPassphrase(license_doc, user_key)
+        if not pass_ok then
+            UIManager:show(InfoMessage:new{
+                text = T(_("Wrong passphrase: %1"), pass_err or "verification failed"),
+            })
+            return
+        end
+
+        local lcp_path      = self:_deriveEncryptedFile(file, publication_link)
+        local decrypted_path = self:_deriveDecryptedFile(lcp_path)
         local title = license_doc.id and T(_("Download publication for license %1?"), license_doc.id)
             or _("Download protected publication now?")
 
         UIManager:show(ConfirmBox:new{
-            text = title .. "\n\n" .. BD.filepath(local_path),
+            text = title .. "\n\n" .. BD.filepath(decrypted_path),
             ok_text = _("Download"),
             ok_callback = function()
                 NetworkMgr:runWhenConnected(function()
@@ -190,17 +215,44 @@ function Lcpl:openFile(file)
                         timeout = 1,
                     })
 
-                    local success, err = self:_downloadFile(local_path, publication_link.href)
+                    local success, dl_err = self:_downloadFile(lcp_path, publication_link.href)
                     if not success then
                         UIManager:show(InfoMessage:new{
-                            text = T(_("Could not download protected publication: %1"), err or "network unreachable"),
+                            text = T(_("Could not download protected publication: %1"),
+                                dl_err or "network unreachable"),
                         })
                         return
                     end
 
                     UIManager:show(InfoMessage:new{
-                        text = T(_("Publication saved to:\n%1\n\nNote: LCP decryption is not bundled yet; this is the first (fulfillment) step."), BD.filepath(local_path)),
+                        text = _("Decrypting…"),
+                        timeout = 1,
                     })
+
+                    -- Derive the content key and decrypt the EPUB.
+                    local content_key, ck_err = LcpDecrypt.decryptContentKey(license_doc, user_key)
+                    if not content_key then
+                        util.removeFile(lcp_path)
+                        UIManager:show(InfoMessage:new{
+                            text = T(_("Could not extract content key: %1"), ck_err or ""),
+                        })
+                        return
+                    end
+
+                    local dec_ok, dec_err = LcpDecrypt.decryptEpub(lcp_path, content_key, decrypted_path)
+                    -- Remove the intermediate encrypted file regardless of outcome.
+                    util.removeFile(lcp_path)
+
+                    if not dec_ok then
+                        UIManager:show(InfoMessage:new{
+                            text = T(_("Decryption failed: %1"), dec_err or ""),
+                        })
+                        return
+                    end
+
+                    -- Open the decrypted EPUB.
+                    local ReaderUI = require("apps/reader/readerui")
+                    ReaderUI:showReader(decrypted_path)
                 end)
             end,
         })
