@@ -76,10 +76,10 @@ function Lcpl:_downloadFile(local_path, remote_url)
     end
 
     local sink = ltn12.sink.file(file_handle)
-    local ok, _, code, headers, status
+    local ok, res, code, headers, status
 
     socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
-    ok, _, code, headers, status = pcall(http.request, {
+    ok, res, code, headers, status = pcall(http.request, {
         url = remote_url,
         headers = {
             ["Accept-Encoding"] = "identity",
@@ -91,8 +91,8 @@ function Lcpl:_downloadFile(local_path, remote_url)
     if not ok then
         sink(nil) -- make sure the file handle is closed on error
         util.removeFile(local_path)
-        logger.warn("LCPL: publication download request failed", code)
-        return false, code
+        logger.warn("LCPL: publication download request failed", res)
+        return false, res
     end
 
     if code == 200 then
@@ -105,9 +105,7 @@ function Lcpl:_downloadFile(local_path, remote_url)
 end
 
 function Lcpl:_showPassphrasePrompt(license_doc, callback)
-    local hint = license_doc and license_doc.encryption
-        and license_doc.encryption.user_key
-        and license_doc.encryption.user_key.text_hint
+    local hint = util.tableGetValue(license_doc, "encryption", "user_key", "text_hint")
 
     local dialog
     dialog = InputDialog:new{

@@ -95,16 +95,8 @@ describe("document registry module", function()
         assert.is_equal(provider_key, provider.provider)
 
         DocumentRegistry.known_providers[provider_key] = backup_known
-        if backup_aux == nil then
-            DocumentRegistry.aux_filetype_provider[extension] = nil
-        else
-            DocumentRegistry.aux_filetype_provider[extension] = backup_aux
-        end
-        if backup_filetype == nil then
-            DocumentRegistry.filetype_provider[extension] = nil
-        else
-            DocumentRegistry.filetype_provider[extension] = backup_filetype
-        end
+        DocumentRegistry.aux_filetype_provider[extension] = backup_aux
+        DocumentRegistry.filetype_provider[extension] = backup_filetype
     end)
 
     it("should keep auxiliary extension unsupported when include_aux is false", function()
@@ -127,15 +119,7 @@ describe("document registry module", function()
         assert.is_nil(DocumentRegistry:getProvider("dummy." .. extension))
 
         DocumentRegistry.known_providers[provider_key] = backup_known
-        if backup_aux == nil then
-            DocumentRegistry.aux_filetype_provider[extension] = nil
-        else
-            DocumentRegistry.aux_filetype_provider[extension] = backup_aux
-        end
-        if backup_filetype == nil then
-            DocumentRegistry.filetype_provider[extension] = nil
-        else
-            DocumentRegistry.filetype_provider[extension] = backup_filetype
-        end
+        DocumentRegistry.aux_filetype_provider[extension] = backup_aux
+        DocumentRegistry.filetype_provider[extension] = backup_filetype
     end)
 end)
