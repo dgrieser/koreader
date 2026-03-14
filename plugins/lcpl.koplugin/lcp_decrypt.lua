@@ -116,23 +116,6 @@ function LcpDecrypt.decryptEpub(lcp_epub_path, content_key, output_path)
     end
     local encrypted_files = LcpDecrypt.parseEncryptionXml(enc_xml)
 
-    -- Collect all ZIP entries into memory.
-    -- Track the mimetype entry separately so it can be written first (EPUB spec requirement).
-    local entries = {}
-    local mimetype_entry
-    for entry in arc:iterate() do
-        if entry.mode == "file" then
-            local data = arc:extractToMemory(entry.path)
-            if data then
-                if entry.path == "mimetype" then
-                    mimetype_entry = { path = entry.path, data = data }
-                else
-                    entries[#entries + 1] = { path = entry.path, data = data }
-                end
-            end
-        end
-    end
-
     -- Open the output EPUB for writing.
     local writer = Archiver.Writer:new{}
     if not writer:open(output_path, "epub") then
@@ -140,41 +123,49 @@ function LcpDecrypt.decryptEpub(lcp_epub_path, content_key, output_path)
     end
 
     local mtime = os.time()
-    local ok_all, fail_reason = true, nil
 
     -- EPUB spec: "mimetype" must be the first entry and stored uncompressed.
-    if mimetype_entry then
+    -- Extract it by name directly — same pattern already used for encryption.xml above.
+    local mimetype_data = arc:extractToMemory("mimetype")
+    if mimetype_data then
         writer:setZipCompression("store")
-        writer:addFileFromMemory(mimetype_entry.path, mimetype_entry.data, mtime)
+        writer:addFileFromMemory("mimetype", mimetype_data, mtime)
     end
 
-    -- Write all remaining files with deflate compression.
+    -- Iterate entries one at a time, processing and writing each immediately.
+    -- This keeps only one entry in memory at a time instead of buffering the whole archive.
     writer:setZipCompression("deflate")
-    for _, e in ipairs(entries) do
-        local path = e.path
-        -- Skip encryption.xml (omitted from output so the reader doesn't treat content as encrypted).
-        if path == "META-INF/encryption.xml" then
-            -- intentionally omitted
-        elseif encrypted_files[path] then
-            -- LCP-encrypted resource: IV is the first 16 bytes.
-            if #e.data < 17 then
-                ok_all = false
-                fail_reason = "encrypted entry too short: " .. path
-                break
+    local ok_all, fail_reason = true, nil
+    for entry in arc:iterate() do
+        if entry.mode == "file" then
+            local path = entry.path
+            -- Skip mimetype (already written) and encryption.xml (omitted from output).
+            if path ~= "mimetype" and path ~= "META-INF/encryption.xml" then
+                local data = arc:extractToMemory(path)
+                if data then
+                    if encrypted_files[path] then
+                        -- LCP-encrypted resource: IV is the first 16 bytes.
+                        if #data < 17 then
+                            ok_all = false
+                            fail_reason = "encrypted entry too short: " .. path
+                            break
+                        end
+                        local iv         = data:sub(1, 16)
+                        local ciphertext = data:sub(17)
+                        local plaintext, dec_err = LcpCrypto.aes256cbc_decrypt(
+                            content_key, iv, ciphertext)
+                        if not plaintext then
+                            ok_all = false
+                            fail_reason = "decryption failed for " .. path .. ": " .. (dec_err or "")
+                            break
+                        end
+                        writer:addFileFromMemory(path, plaintext, mtime)
+                    else
+                        -- Non-encrypted resource: copy verbatim.
+                        writer:addFileFromMemory(path, data, mtime)
+                    end
+                end
             end
-            local iv         = e.data:sub(1, 16)
-            local ciphertext = e.data:sub(17)
-            local plaintext, dec_err = LcpCrypto.aes256cbc_decrypt(
-                content_key, iv, ciphertext)
-            if not plaintext then
-                ok_all = false
-                fail_reason = "decryption failed for " .. path .. ": " .. (dec_err or "")
-                break
-            end
-            writer:addFileFromMemory(path, plaintext, mtime)
-        else
-            -- Non-encrypted resource: copy verbatim.
-            writer:addFileFromMemory(path, e.data, mtime)
         end
     end
 

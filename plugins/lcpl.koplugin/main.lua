@@ -59,7 +59,7 @@ end
 -- Returns the path for the encrypted intermediate file (e.g. book.lcp.epub).
 function Lcpl:_deriveEncryptedFile(file, publication_link)
     local folder, base_name = util.splitFilePathName(file)
-    local filename = base_name:gsub("%.[^%.]+$", "")
+    local filename = base_name:match("(.+)%.[^%.]+$") or base_name
     local ext
 
     if publication_link and publication_link.type then
