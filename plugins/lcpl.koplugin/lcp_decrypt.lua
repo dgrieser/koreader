@@ -2,6 +2,7 @@
 -- Implements the full decryption pipeline: user key derivation, passphrase
 -- verification, content key extraction, and per-resource decryption.
 local Archiver  = require("ffi/archiver")
+local JSON      = require("json")
 local LcpCrypto = require("lcp_crypto")
 local Utf8Proc  = require("ffi/utf8proc")
 local logger    = require("logger")
@@ -177,6 +178,27 @@ function LcpDecrypt.decryptEpub(lcp_epub_path, content_key, output_path)
     end
 
     return true
+end
+
+--- Extract and parse the LCP license embedded in an EPUB's META-INF/license.lcpl.
+--- Returns the parsed license table, or nil + error string if not found / not valid JSON.
+--- @param epub_path string  path to the EPUB file
+--- @return table|nil license_doc, string|nil err
+function LcpDecrypt.extractLicenseFromEpub(epub_path)
+    local arc = Archiver.Reader:new()
+    if not arc:open(epub_path) then
+        return nil, "could not open EPUB: " .. epub_path
+    end
+    local lcpl_data = arc:extractToMemory("META-INF/license.lcpl")
+    if not lcpl_data then
+        return nil, "no META-INF/license.lcpl in EPUB"
+    end
+    local ok, license_doc = pcall(JSON.decode, lcpl_data)
+    if not ok or type(license_doc) ~= "table" then
+        return nil, "invalid license.lcpl JSON inside EPUB"
+    end
+    logger.dbg("LCP: extracted license from EPUB, id =", license_doc.id)
+    return license_doc
 end
 
 return LcpDecrypt

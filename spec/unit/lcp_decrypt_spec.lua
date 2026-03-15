@@ -235,4 +235,28 @@ describe("LCP decrypt module", function()
             assert.are_not.equal(k1, k2)
         end)
     end)
+
+    describe("extractLicenseFromEpub", function()
+        it("returns nil + error for a non-existent file", function()
+            local doc, err = LcpDecrypt.extractLicenseFromEpub("/nonexistent/path.epub")
+            assert.is_nil(doc)
+            assert.is_not_nil(err)
+        end)
+
+        it("returns nil + error for an EPUB without META-INF/license.lcpl", function()
+            -- Use a real EPUB fixture from the test fixtures directory, if available.
+            -- If not present, skip gracefully.
+            local fixture = "spec/unit/fixtures/sample.epub"
+            local f = io.open(fixture, "rb")
+            if not f then
+                -- No fixture available; skip test.
+                return
+            end
+            f:close()
+            local doc, err = LcpDecrypt.extractLicenseFromEpub(fixture)
+            -- A plain (non-LCP) EPUB should return nil.
+            assert.is_nil(doc)
+            assert.is_not_nil(err)
+        end)
+    end)
 end)
