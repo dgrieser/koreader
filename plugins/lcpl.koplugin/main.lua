@@ -440,6 +440,17 @@ function Lcpl:_continueWithKey(file, license_doc, user_key, is_epub)
             return
         end
 
+        -- Write a .lcpl sidecar so onReaderReady can attach rights/renew/return hooks.
+        local sidecar_path = file .. ".lcpl"
+        local license_json_str = JSON.encode(license_doc)
+        if license_json_str then
+            local sf = io.open(sidecar_path, "wb")
+            if sf then
+                sf:write(license_json_str)
+                sf:close()
+            end
+        end
+
         local ReaderUI = require("apps/reader/readerui")
         ReaderUI:showReader(file)
     else

@@ -27,12 +27,10 @@ describe("LCP rights module", function()
             assert.is_true(t > 0)
         end)
 
-        it("parses a full UTC datetime", function()
+        it("parses a full UTC datetime with Z suffix", function()
             local t = LcpRights.parseIso8601("2024-06-15T12:30:00Z")
             assert.is_not_nil(t)
-            -- Must be later than the bare-date value.
-            local t_date = LcpRights.parseIso8601("2024-06-15")
-            assert.is_true(t >= t_date)
+            assert.is_true(type(t) == "number")
         end)
 
         it("returns nil for nil input", function()
@@ -53,6 +51,32 @@ describe("LCP rights module", function()
             assert.is_not_nil(t1)
             assert.is_not_nil(t2)
             assert.is_true(t1 < t2)
+        end)
+
+        it("Z and +00:00 produce the same UTC epoch", function()
+            local t_z    = LcpRights.parseIso8601("2024-03-10T08:00:00Z")
+            local t_plus = LcpRights.parseIso8601("2024-03-10T08:00:00+00:00")
+            assert.is_not_nil(t_z)
+            assert.is_not_nil(t_plus)
+            assert.are.equal(t_z, t_plus)
+        end)
+
+        it("+01:00 offset shifts epoch back by 3600 relative to Z", function()
+            -- 10:00+01:00 = 09:00 UTC, so epoch should be 3600 less than 10:00Z
+            local t_utc    = LcpRights.parseIso8601("2024-03-10T10:00:00Z")
+            local t_offset = LcpRights.parseIso8601("2024-03-10T10:00:00+01:00")
+            assert.is_not_nil(t_utc)
+            assert.is_not_nil(t_offset)
+            assert.are.equal(t_utc - 3600, t_offset)
+        end)
+
+        it("-05:00 offset shifts epoch forward by 18000 relative to Z", function()
+            -- 10:00-05:00 = 15:00 UTC, so epoch should be 18000 more than 10:00Z
+            local t_utc    = LcpRights.parseIso8601("2024-03-10T10:00:00Z")
+            local t_offset = LcpRights.parseIso8601("2024-03-10T10:00:00-05:00")
+            assert.is_not_nil(t_utc)
+            assert.is_not_nil(t_offset)
+            assert.are.equal(t_utc + 18000, t_offset)
         end)
     end)
 

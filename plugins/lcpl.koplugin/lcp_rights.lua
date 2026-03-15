@@ -3,17 +3,34 @@
 
 local LcpRights = {}
 
---- Parse an ISO 8601 date/datetime string and return os.time() integer.
---- Supports bare dates (2024-01-15), UTC datetimes (2024-01-15T10:30:00Z),
---- and datetime with timezone offset (2024-01-15T10:30:00+02:00, treated as UTC).
+-- Compute the local timezone offset in seconds (local - UTC), cached after first call.
+-- os.time(utc_fields) treats the UTC fields as local time, so the delta is the offset.
+local _local_utc_offset
+local function localUtcOffset()
+    if not _local_utc_offset then
+        local now = os.time()
+        local utc_fields = os.date("!*t", now)
+        -- os.time(utc_fields) interprets them as LOCAL → returns now - offset
+        -- so offset = now - os.time(utc_fields)
+        _local_utc_offset = os.difftime(now, os.time(utc_fields))
+    end
+    return _local_utc_offset
+end
+
+--- Parse an ISO 8601 date/datetime string and return os.time() integer (UTC epoch).
+--- Handles: bare dates, Z suffix, and ±HH:MM / ±HHMM offsets.
+--- Bare dates (no timezone marker) are assumed to be in local time.
 --- @param date_str string
---- @return number|nil  seconds since epoch, or nil on parse failure
+--- @return number|nil  seconds since epoch (UTC), or nil on parse failure
 function LcpRights.parseIso8601(date_str)
     if not date_str then return nil end
-    local y, m, d, H, M, S = date_str:match(
-        "(%d%d%d%d)-(%d%d)-(%d%d)[T ]?(%d*):?(%d*):?(%d*)")
+    -- Capture components + optional timezone tail.
+    local y, m, d, H, M, S, tz_tail = date_str:match(
+        "(%d%d%d%d)-(%d%d)-(%d%d)[T ]?(%d*):?(%d*):?(%d*)(.*)")
     if not y then return nil end
-    return os.time({
+
+    -- os.time() treats fields as local time → returns UTC epoch.
+    local epoch = os.time({
         year  = tonumber(y),
         month = tonumber(m),
         day   = tonumber(d),
@@ -21,6 +38,29 @@ function LcpRights.parseIso8601(date_str)
         min   = M ~= "" and tonumber(M) or 0,
         sec   = S ~= "" and tonumber(S) or 0,
     })
+
+    -- If a timezone marker is present, adjust so epoch is correct UTC.
+    -- Formula: utc_epoch = os.time(fields_as_local) + local_offset - parsed_offset
+    --   os.time(fields_as_local) already subtracts local_offset internally,
+    --   so we add it back then subtract the string's own offset.
+    tz_tail = tz_tail and tz_tail:match("^%s*(.-)%s*$") or ""  -- trim whitespace
+    if tz_tail ~= "" then
+        local parsed_offset
+        if tz_tail == "Z" or tz_tail == "z" then
+            parsed_offset = 0
+        else
+            local sign, oh, om = tz_tail:match("^([%+%-])(%d%d):?(%d%d)")
+            if sign and oh then
+                parsed_offset = tonumber(oh) * 3600 + tonumber(om) * 60
+                if sign == "-" then parsed_offset = -parsed_offset end
+            end
+        end
+        if parsed_offset then
+            epoch = epoch + localUtcOffset() - parsed_offset
+        end
+    end
+
+    return epoch
 end
 
 --- Check that the current time falls within the license's rights window.
