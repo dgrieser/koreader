@@ -398,145 +398,132 @@ function Lcpl:openFile(file)
     end
 end
 
---- Called once we have a verified user key. Handles both embedded-EPUB and .lcpl flows.
-function Lcpl:_continueWithKey(file, license_doc, user_key, is_epub)
+-- Write data to path, silently skipping on error (sidecar write is best-effort).
+local function writeSidecar(path, data)
+    if not data or data == "" then return end
+    local f = io.open(path, "wb")
+    if f then
+        f:write(data)
+        f:close()
+    end
+end
+
+--- Decrypt an embedded LCP EPUB in-place and open it in the reader.
+function Lcpl:_decryptEmbeddedEpub(file, license_doc, user_key)
     local LcpDecrypt = require("lcp_decrypt")
-    local LcpRights  = require("lcp_rights")
 
-    -- Seed copy counter (idempotent).
-    LcpRights.initCopyRights(license_doc)
+    UIManager:show(InfoMessage:new{ text = _("Decrypting LCP EPUB…"), timeout = 1 })
 
-    if is_epub then
-        -- Embedded LCP EPUB: decrypt to a temp file, then rename over the original.
+    local content_key, ck_err = LcpDecrypt.decryptContentKey(license_doc, user_key)
+    if not content_key then
         UIManager:show(InfoMessage:new{
-            text = _("Decrypting LCP EPUB…"),
-            timeout = 1,
+            text = T(_("Could not extract content key: %1"), ck_err or ""),
         })
+        return
+    end
 
-        local content_key, ck_err = LcpDecrypt.decryptContentKey(license_doc, user_key)
-        if not content_key then
-            UIManager:show(InfoMessage:new{
-                text = T(_("Could not extract content key: %1"), ck_err or ""),
-            })
-            return
-        end
+    local tmp_path = file .. ".lcp_tmp.epub"
+    local dec_ok, dec_err = LcpDecrypt.decryptEpub(file, content_key, tmp_path)
+    if not dec_ok then
+        util.removeFile(tmp_path)
+        UIManager:show(InfoMessage:new{ text = T(_("Decryption failed: %1"), dec_err or "") })
+        return
+    end
 
-        local tmp_path = file .. ".lcp_tmp.epub"
-        local dec_ok, dec_err = LcpDecrypt.decryptEpub(file, content_key, tmp_path)
-        if not dec_ok then
-            util.removeFile(tmp_path)
-            UIManager:show(InfoMessage:new{
-                text = T(_("Decryption failed: %1"), dec_err or ""),
-            })
-            return
-        end
+    local rename_ok, rename_err = os.rename(tmp_path, file)
+    if not rename_ok then
+        util.removeFile(tmp_path)
+        UIManager:show(InfoMessage:new{
+            text = T(_("Could not replace EPUB file: %1"), rename_err or ""),
+        })
+        return
+    end
 
-        local rename_ok, rename_err = os.rename(tmp_path, file)
-        if not rename_ok then
-            util.removeFile(tmp_path)
-            UIManager:show(InfoMessage:new{
-                text = T(_("Could not replace EPUB file: %1"), rename_err or ""),
-            })
-            return
-        end
+    -- Write a .lcpl sidecar so onReaderReady can attach rights/renew/return hooks.
+    writeSidecar(file .. ".lcpl", JSON.encode(license_doc))
 
-        -- Write a .lcpl sidecar so onReaderReady can attach rights/renew/return hooks.
-        local sidecar_path = file .. ".lcpl"
-        local license_json_str = JSON.encode(license_doc)
-        if license_json_str then
-            local sf = io.open(sidecar_path, "wb")
-            if sf then
-                sf:write(license_json_str)
-                sf:close()
-            end
-        end
+    local ReaderUI = require("apps/reader/readerui")
+    ReaderUI:showReader(file)
+end
 
-        local ReaderUI = require("apps/reader/readerui")
-        ReaderUI:showReader(file)
-    else
-        -- Standalone .lcpl: validate URL, show download dialog.
-        local publication_link = self:_findLink(license_doc, "publication")
-        if not publication_link or not publication_link.href then
-            UIManager:show(InfoMessage:new{
-                text = _("No publication link found in LCPL file."),
-            })
-            return
-        end
+--- Show the download confirmation dialog, then download, decrypt, and open the publication.
+function Lcpl:_downloadAndDecryptLcpl(file, license_doc, user_key)
+    local LcpDecrypt = require("lcp_decrypt")
 
-        local parsed = url.parse(publication_link.href)
-        if not parsed or (parsed.scheme ~= "http" and parsed.scheme ~= "https") then
-            UIManager:show(InfoMessage:new{
-                text = _("Unsupported publication URL in LCPL file."),
-            })
-            return
-        end
+    local publication_link = self:_findLink(license_doc, "publication")
+    if not publication_link or not publication_link.href then
+        UIManager:show(InfoMessage:new{ text = _("No publication link found in LCPL file.") })
+        return
+    end
 
-        local lcp_path       = self:_deriveEncryptedFile(file, publication_link)
-        local decrypted_path = self:_deriveDecryptedFile(lcp_path)
-        local title = license_doc.id
-            and T(_("Download publication for license %1?"), license_doc.id)
-            or _("Download protected publication now?")
+    local parsed = url.parse(publication_link.href)
+    if not parsed or (parsed.scheme ~= "http" and parsed.scheme ~= "https") then
+        UIManager:show(InfoMessage:new{ text = _("Unsupported publication URL in LCPL file.") })
+        return
+    end
 
-        UIManager:show(ConfirmBox:new{
-            text = title .. "\n\n" .. BD.filepath(decrypted_path),
-            ok_text = _("Download"),
-            ok_callback = function()
-                NetworkMgr:runWhenConnected(function()
+    local lcp_path       = self:_deriveEncryptedFile(file, publication_link)
+    local decrypted_path = self:_deriveDecryptedFile(lcp_path)
+    local title = license_doc.id
+        and T(_("Download publication for license %1?"), license_doc.id)
+        or _("Download protected publication now?")
+
+    UIManager:show(ConfirmBox:new{
+        text     = title .. "\n\n" .. BD.filepath(decrypted_path),
+        ok_text  = _("Download"),
+        ok_callback = function()
+            NetworkMgr:runWhenConnected(function()
+                UIManager:show(InfoMessage:new{
+                    text = _("Downloading LCP publication…"), timeout = 1,
+                })
+
+                local success, dl_err = self:_downloadFile(lcp_path, publication_link.href)
+                if not success then
                     UIManager:show(InfoMessage:new{
-                        text = _("Downloading LCP publication…"),
-                        timeout = 1,
+                        text = T(_("Could not download protected publication: %1"),
+                            dl_err or "network unreachable"),
                     })
+                    return
+                end
 
-                    local success, dl_err = self:_downloadFile(lcp_path, publication_link.href)
-                    if not success then
-                        UIManager:show(InfoMessage:new{
-                            text = T(_("Could not download protected publication: %1"),
-                                dl_err or "network unreachable"),
-                        })
-                        return
-                    end
+                UIManager:show(InfoMessage:new{ text = _("Decrypting…"), timeout = 1 })
 
-                    UIManager:show(InfoMessage:new{
-                        text = _("Decrypting…"),
-                        timeout = 1,
-                    })
-
-                    local content_key, ck_err = LcpDecrypt.decryptContentKey(license_doc, user_key)
-                    if not content_key then
-                        util.removeFile(lcp_path)
-                        UIManager:show(InfoMessage:new{
-                            text = T(_("Could not extract content key: %1"), ck_err or ""),
-                        })
-                        return
-                    end
-
-                    local dec_ok, dec_err = LcpDecrypt.decryptEpub(lcp_path, content_key, decrypted_path)
+                local content_key, ck_err = LcpDecrypt.decryptContentKey(license_doc, user_key)
+                if not content_key then
                     util.removeFile(lcp_path)
+                    UIManager:show(InfoMessage:new{
+                        text = T(_("Could not extract content key: %1"), ck_err or ""),
+                    })
+                    return
+                end
 
-                    if not dec_ok then
-                        UIManager:show(InfoMessage:new{
-                            text = T(_("Decryption failed: %1"), dec_err or ""),
-                        })
-                        return
-                    end
+                local dec_ok, dec_err = LcpDecrypt.decryptEpub(lcp_path, content_key, decrypted_path)
+                util.removeFile(lcp_path)
 
-                    -- Write the original license JSON as a .lcpl sidecar so the reader
-                    -- module can offer renew/return later.
-                    local sidecar_path = decrypted_path .. ".lcpl"
-                    local license_json = util.readFromFile(file, "rb")
-                    if license_json then
-                        local f = io.open(sidecar_path, "wb")
-                        if f then
-                            f:write(license_json)
-                            f:close()
-                        end
-                    end
+                if not dec_ok then
+                    UIManager:show(InfoMessage:new{
+                        text = T(_("Decryption failed: %1"), dec_err or ""),
+                    })
+                    return
+                end
 
-                    local ReaderUI = require("apps/reader/readerui")
-                    ReaderUI:showReader(decrypted_path)
-                end)
-            end,
-        })
+                -- Write the original license JSON as a .lcpl sidecar.
+                writeSidecar(decrypted_path .. ".lcpl", util.readFromFile(file, "rb"))
+
+                local ReaderUI = require("apps/reader/readerui")
+                ReaderUI:showReader(decrypted_path)
+            end)
+        end,
+    })
+end
+
+--- Called once we have a verified user key. Dispatches to the appropriate flow.
+function Lcpl:_continueWithKey(file, license_doc, user_key, is_epub)
+    require("lcp_rights").initCopyRights(license_doc)  -- seed copy counter (idempotent)
+    if is_epub then
+        self:_decryptEmbeddedEpub(file, license_doc, user_key)
+    else
+        self:_downloadAndDecryptLcpl(file, license_doc, user_key)
     end
 end
 

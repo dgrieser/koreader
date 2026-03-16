@@ -59,54 +59,54 @@ function LcpStatus.expandUriTemplate(href, params)
     return base .. sep .. table.concat(parts, "&")
 end
 
--- Perform a simple HTTP request, returning body string + status code.
-local function httpGet(request_url)
+-- Perform an HTTP request, returning body string + status code + optional error.
+local function httpRequest(request_url, options)
+    options = options or {}
     local body_parts = {}
     local ok, res, code = pcall(http.request, {
-        url = request_url,
-        headers = { ["Accept"] = "application/json" },
-        sink = ltn12.sink.table(body_parts),
+        method  = options.method,
+        url     = request_url,
+        headers = options.headers or {},
+        source  = options.source,
+        sink    = ltn12.sink.table(body_parts),
     })
     if not ok then
         return nil, nil, "request failed: " .. tostring(res)
     end
     return table.concat(body_parts), code
+end
+
+local function httpGet(request_url)
+    return httpRequest(request_url, {
+        headers = { ["Accept"] = "application/json" },
+    })
 end
 
 local function httpPost(request_url)
-    local body_parts = {}
-    local ok, res, code = pcall(http.request, {
-        method = "POST",
-        url = request_url,
-        headers = {
-            ["Content-Length"] = "0",
-            ["Content-Type"] = "application/x-www-form-urlencoded",
-        },
-        source = ltn12.source.string(""),
-        sink = ltn12.sink.table(body_parts),
+    return httpRequest(request_url, {
+        method  = "POST",
+        headers = { ["Content-Length"] = "0", ["Content-Type"] = "application/x-www-form-urlencoded" },
+        source  = ltn12.source.string(""),
     })
-    if not ok then
-        return nil, nil, "request failed: " .. tostring(res)
-    end
-    return table.concat(body_parts), code
 end
 
 local function httpPut(request_url)
-    local body_parts = {}
-    local ok, res, code = pcall(http.request, {
-        method = "PUT",
-        url = request_url,
-        headers = {
-            ["Content-Length"] = "0",
-            ["Content-Type"] = "application/json",
-        },
-        source = ltn12.source.string(""),
-        sink = ltn12.sink.table(body_parts),
+    return httpRequest(request_url, {
+        method  = "PUT",
+        headers = { ["Content-Length"] = "0", ["Content-Type"] = "application/json" },
+        source  = ltn12.source.string(""),
     })
-    if not ok then
-        return nil, nil, "request failed: " .. tostring(res)
+end
+
+-- Return the href of the first link whose rel matches, or nil.
+local function findLinkHref(links, rel)
+    if type(links) ~= "table" then return nil end
+    for _, link in ipairs(links) do
+        if link.rel == rel and link.href then
+            return link.href
+        end
     end
-    return table.concat(body_parts), code
+    return nil
 end
 
 --- Fetch and parse the LCP status document referenced in the license.
@@ -114,16 +114,7 @@ end
 --- @return table|nil status_doc, string|nil err
 function LcpStatus.fetchStatusDoc(license_doc)
     local links = license_doc and license_doc.links
-    if type(links) ~= "table" then
-        return nil, "no links in license"
-    end
-    local status_href
-    for _, link in ipairs(links) do
-        if link.rel == "status" and link.href then
-            status_href = link.href
-            break
-        end
-    end
+    local status_href = findLinkHref(links, "status")
     if not status_href then
         return nil, "no status link in license"
     end
@@ -179,17 +170,7 @@ end
 --- @param status_doc   table  parsed status document (provides the register link)
 --- @return true|nil, string|nil
 function LcpStatus.registerDevice(license_doc, status_doc) -- luacheck: ignore license_doc
-    local links = status_doc and status_doc.links
-    if type(links) ~= "table" then
-        return nil, "no links in status document"
-    end
-    local register_href
-    for _, link in ipairs(links) do
-        if link.rel == "register" and link.href then
-            register_href = link.href
-            break
-        end
-    end
+    local register_href = findLinkHref(status_doc and status_doc.links, "register")
     if not register_href then
         -- No register link — server does not require registration.
         logger.dbg("LCP: no register link, skipping device registration")
@@ -219,17 +200,7 @@ end
 --- @param status_doc table
 --- @return true|nil, string|nil
 function LcpStatus.renewLicense(status_doc)
-    local links = status_doc and status_doc.links
-    if type(links) ~= "table" then
-        return nil, "no links in status document"
-    end
-    local renew_href
-    for _, link in ipairs(links) do
-        if link.rel == "renew" and link.href then
-            renew_href = link.href
-            break
-        end
-    end
+    local renew_href = findLinkHref(status_doc and status_doc.links, "renew")
     if not renew_href then
         return nil, "no renew link in status document"
     end
@@ -256,17 +227,7 @@ end
 --- @param status_doc table
 --- @return true|nil, string|nil
 function LcpStatus.returnContent(status_doc)
-    local links = status_doc and status_doc.links
-    if type(links) ~= "table" then
-        return nil, "no links in status document"
-    end
-    local return_href
-    for _, link in ipairs(links) do
-        if link.rel == "return" and link.href then
-            return_href = link.href
-            break
-        end
-    end
+    local return_href = findLinkHref(status_doc and status_doc.links, "return")
     if not return_href then
         return nil, "no return link in status document"
     end
