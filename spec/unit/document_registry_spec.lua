@@ -70,4 +70,56 @@ describe("document registry module", function()
 
         G_reader_settings:delSetting("provider")
     end)
+
+    it("should register and resolve auxiliary provider by extension only when include_aux is true", function()
+        local provider_key = "spec_aux_provider"
+        local extension = "specaux"
+        local backup_known = DocumentRegistry.known_providers[provider_key]
+        local backup_aux = DocumentRegistry.aux_filetype_provider[extension]
+        local backup_filetype = DocumentRegistry.filetype_provider[extension]
+
+        DocumentRegistry:addAuxProvider({
+            provider_name = "Spec Aux Provider",
+            provider = provider_key,
+            order = 999,
+            extensions = { extension },
+            disable_file = true,
+            disable_type = false,
+        })
+
+        assert.is_false(DocumentRegistry:hasProvider("dummy." .. extension))
+        assert.is_true(DocumentRegistry:hasProvider("dummy." .. extension, nil, true))
+
+        local provider = DocumentRegistry:getProvider("dummy." .. extension, true)
+        assert.is_not_nil(provider)
+        assert.is_equal(provider_key, provider.provider)
+
+        DocumentRegistry.known_providers[provider_key] = backup_known
+        DocumentRegistry.aux_filetype_provider[extension] = backup_aux
+        DocumentRegistry.filetype_provider[extension] = backup_filetype
+    end)
+
+    it("should keep auxiliary extension unsupported when include_aux is false", function()
+        local provider_key = "spec_aux_provider_2"
+        local extension = "specaux2"
+        local backup_known = DocumentRegistry.known_providers[provider_key]
+        local backup_aux = DocumentRegistry.aux_filetype_provider[extension]
+        local backup_filetype = DocumentRegistry.filetype_provider[extension]
+
+        DocumentRegistry:addAuxProvider({
+            provider_name = "Spec Aux Provider 2",
+            provider = provider_key,
+            order = 998,
+            extensions = { extension },
+            disable_file = true,
+            disable_type = false,
+        })
+
+        assert.is_false(DocumentRegistry:hasProvider("dummy." .. extension))
+        assert.is_nil(DocumentRegistry:getProvider("dummy." .. extension))
+
+        DocumentRegistry.known_providers[provider_key] = backup_known
+        DocumentRegistry.aux_filetype_provider[extension] = backup_aux
+        DocumentRegistry.filetype_provider[extension] = backup_filetype
+    end)
 end)
