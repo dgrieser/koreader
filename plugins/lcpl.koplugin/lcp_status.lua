@@ -11,8 +11,8 @@ local url = require("socket.url")
 local LcpStatus = {}
 
 -- Generate a random UUID v4 string.
+-- LuaJIT seeds math.random from a high-entropy source at startup; we rely on that.
 local function generateUUID()
-    math.randomseed(os.time())
     local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
     return template:gsub("[xy]", function(c)
         local v = c == "x" and math.random(0, 15) or math.random(8, 11)
